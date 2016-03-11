@@ -168,6 +168,13 @@ void eval(char *cmdline)
 	sigset_t mask;
 
 	bg = parseline(cmdline, argv);
+	/* If there is no arguemnet, simply return.
+         * passing null argument to strcmp 
+         * can lead to undefined behaviour */
+    	if (!argv[0]) {
+        	return;
+    	}
+
 	if(!builtin_cmd(argv)) {
 
 		// Blocking SIGCHILD signals to avoid a race
