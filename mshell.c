@@ -11,6 +11,8 @@
 #include <sys/types.h>
 #include <sys/wait.h>
 #include <errno.h>
+#include <readline/readline.h>
+#include <readline/history.h>
 
 /* Misc manifest constants */
 #define MAXLINE 1024 /* max line size */
@@ -81,14 +83,62 @@ void unix_error(char *msg);
 void app_error(char *msg);
 typedef void handler_t(int);handler_t *Signal(int signum, handler_t *handler);
 
+#define MAX_WORDS 152
+char* cmd [] ={"zmore","zgrep","zfgrep","zdiff","zcat","whiptail","vmmouse_detect","unicode_start","uname","ulockmgr_server","touch","tar","sync","stty","ss","setupcon","setfacl","run-parts","rnano","rm","rbash","ps","plymouth","ping","openvt","ntfswipe","ntfsmove","ntfsls","ntfsfix","ntfsdecrypt","ntfscluster","ntfscat","netstat","nc.openbsd","nano","mt-gnu","mountpoint","more","mknod","lsmod","ls","login","ln","lesskey","lessecho","kill","ip","init-checkconf","gzip","gunzip","getfacl","fuser","fgrep","false","ed","dumpkeys","dnsdomainname","dir","dd","dbus-daemon","date","cpio","chvt","chmod","chacl","bzmore","bzip2recover","bzgrep","bzexe","bzdiff","bzcat","bunzip2","bash","znew","zless","zforce","zegrep","zcmp","ypdomainname","which","vdir","uncompress","umount","true","tempfile","tailf","su","static-sh","sleep","sh","setfont","sed","running-in-container","rmdir","readlink","pwd","plymouth-upstart-bridge","ping6","pidof","open","ntfstruncate","ntfsmftalloc","ntfsinfo","ntfsdump_logfile","ntfscmp","ntfsck","nisdomainname","netcat","nc","mv","mt","mount","mktemp","mkdir","lsblk","loadkeys","lesspipe","lessfile","less","kbd_mode","initctl2dot","hostname","gzexe","grep","fusermount","findmnt","fgconsole","egrep","echo","domainname","dmesg","df","dbus-uuidgen","dbus-cleanup-sockets","dash","cp","chown","chgrp","cat","bzless","bzip2","bzfgrep","bzegrep","bzcmp","busybox"};
 /*
 * main - The shell's main routine
 */
+void * xmalloc (int size)
+{
+    void *buf;
+    buf = malloc (size);
+    if (!buf) {
+        fprintf (stderr, "Error: Out of memory. Exiting.'n");
+        exit (1);
+    }
+    return buf;
+}
+
+char * dupstr (char* s) {
+    char *r;
+    r = (char*) xmalloc ((strlen (s) + 1));
+    strcpy (r, s);
+    return (r);
+}
+
+char* my_generator(const char* text, int state)
+{
+    static int list_index, len;
+    char *name;
+    if (!state) {
+        list_index = 0;
+        len = strlen (text);
+    }
+    while (name = cmd[list_index]) {
+        list_index++;
+        if (strncmp (name, text, len) == 0) {
+            return (dupstr(name));
+        }
+    }
+    /* If no names matched, then return NULL. */
+    return ((char *)NULL);
+}
+
+static char** my_completion( const char * text , int start,  int end)
+{
+    char **matches;
+
+    matches = (char **)NULL;
+    if (start == 0)
+        matches = rl_completion_matches ((char*)text, &my_generator);
+    return (matches);
+}
+
 
 int main(int argc, char **argv)
 {
 	char c;
-	char cmdline[MAXLINE];
+	char *cmdline;
 	int emit_prompt = 1; /* emit prompt (default) */
 
 	/* Redirect stderr to stdout (so that driver will get all output
@@ -109,7 +159,7 @@ int main(int argc, char **argv)
 				break;
 			default:
 				usage();
-		} 
+		}
 	}
 
 	/* Install the signal handlers */
@@ -125,25 +175,26 @@ int main(int argc, char **argv)
 	/* Initialize the job list */
 	initjobs(jobs);
 
+    rl_attempted_completion_function = my_completion;
 	/*Execute the shell's read/eval loop */
 	while (1) {
-		
-		/* Read command line */
-		if (emit_prompt) {
-			printf("%s", prompt);
-			fflush(stdout);
-		}
-		if ((fgets(cmdline, MAXLINE, stdin) == NULL) && ferror(stdin))
-			app_error("fgets error");
-		if (feof(stdin)) { /* End of file (ctrl-d) */
-			fflush(stdout);
-			exit(0);
-		}
-	
+        cmdline = readline("msh>");
+            //enable auto-complete
 		/* Evaluate the command line */
-		eval(cmdline);
+        /* CTRL+D, i/p = null string, say good bye */
+        if (!cmdline) {
+            fflush(stdout);
+            exit(0);
+        }
+        if  (cmdline) {
+            eval(cmdline);
+        }
+        fflush(stdout);
 		fflush(stdout);
-		fflush(stdout);
+        if (cmdline) {
+            free(cmdline);
+        }
+
 	}
 	exit(0); /* control never reaches here */
 }
@@ -169,7 +220,7 @@ void eval(char *cmdline)
 
 	bg = parseline(cmdline, argv);
 	/* If there is no arguemnet, simply return.
-         * passing null argument to strcmp 
+         * passing null argument to strcmp
          * can lead to undefined behaviour */
     	if (!argv[0]) {
         	return;
@@ -202,7 +253,7 @@ void eval(char *cmdline)
 				unix_error("setpgid error");
 			}
 			if(execvp(argv[0], argv) < 0) {
-				printf("%s: Command not found\n", argv[0]);
+				printf("%s: something went wrong : <%s>\n", argv[0], strerror(errno));
 				exit(1);
 			}
 		}
@@ -243,10 +294,15 @@ int parseline(const char *cmdline, char **argv)
 	char *delim; /* points to first space delimiter */
 	int argc; /* number of args */
 	int bg; /* background job? */
-	
+
 	strcpy(buf, cmdline);
-	buf[strlen(buf)-1] = ' '; /* replace trailing '\n' with space */
-	while (*buf && (*buf == ' ')) /* ignore leading spaces */
+    if (buf[strlen(buf)-1] == '\n') {
+        buf[strlen(buf)-1] = ' '; /* replace trailing '\n' with space */
+    } else {
+        buf[strlen(buf)] = ' ';
+        buf[strlen(buf)] = 0;
+    }
+    while (*buf && (*buf == ' ')) /* ignore leading spaces */
 	buf++;
 
 	/* Build the argv list */
@@ -278,7 +334,7 @@ int parseline(const char *cmdline, char **argv)
 	if (argc == 0) /* ignore blank line */
 		return 1;
 	/* should the job run in the background? */
-	
+
 	if ((bg = (*argv[argc-1] == '&')) != 0) {
 		argv[--argc] = NULL;
 	}
@@ -302,11 +358,11 @@ int builtin_cmd(char **argv)
 		do_bgfg(argv);
 		return 1;
 	}
+    /* quit/exit command */
+	if((!strcmp(argv[0],"quit")) || (!strcmp(argv[0],"exit"))) exit(0);
 
-	if(!strcmp(argv[0],"quit")) exit(0); /* quit command */
-	
 	if(!strcmp(argv[0],"&")) return 1; /* ignore singleton & */
-	
+
 	return 0; /* not a builtin command */
 }
 
@@ -347,7 +403,7 @@ void do_bgfg(char **argv)
 		printf("%s: argument must be a PID or %%jobid\n",argv[0]);
 		return;
 	}
-	
+
 	if(!strcmp(argv[0],"bg"))
 	{
 		if(kill(-(j->pid),SIGCONT) < 0) unix_error("do_bgfg(): kill error");
@@ -376,7 +432,7 @@ void waitfg(pid_t pid)
 {
 	struct job_t *fg_job = getjobpid(jobs,pid);
 	if(!fg_job) return; /* Foreground job has already completed */
-	while(fg_job->pid == pid && fg_job->state == FG)	
+	while(fg_job->pid == pid && fg_job->state == FG)
 		sleep(1);
 	return;
 }
@@ -403,7 +459,7 @@ void sigchld_handler(int sig)
 		if(WIFSTOPPED(status))
 		{
 			struct job_t *j = getjobpid(jobs,child_pid);
-			
+
 			if(!j)
 			{
 				printf("Lost track of (%d)\n", child_pid);
@@ -438,7 +494,7 @@ void sigchld_handler(int sig)
 void sigint_handler(int sig)
 {
 	pid_t pid;
-	
+
 	if((pid = fgpid(jobs)) > 0) /* fgpid() returns 0 if there's no foreground job */
 	{
 		/* "-pid" means signal all processes in process group pid */
@@ -461,7 +517,7 @@ void sigtstp_handler(int sig)
 	{
 		if(kill(-pid,SIGTSTP) < 0) unix_error("sigtstp_handler(): kill() error");
 		printf("Job [%d] (%d) stopped by signal 20\n", pid2jid(pid), pid);
-	}	
+	}
 	return;
 }
 
@@ -483,7 +539,7 @@ void clearjob(struct job_t *job) {
 /* initjobs - Initialize the job list */
 void initjobs(struct job_t *jobs) {
 	int i;
-	
+
 	for (i = 0; i < MAXJOBS; i++)
 		clearjob(&jobs[i]);
 	}
@@ -517,7 +573,7 @@ int addjob(struct job_t *jobs, pid_t pid, int state, char *cmdline)
 			strcpy(jobs[i].cmdline, cmdline);
 			if(verbose){
 			printf("Added job [%d] %d %s\n", jobs[i].jid, jobs[i].pid, jobs[i].cmdline);
-			}	
+			}
 			return 1;
 		}
 	}
@@ -591,7 +647,7 @@ int pid2jid(pid_t pid)
 void listjobs(struct job_t *jobs)
 {
 	int i;
-	
+
 	for (i = 0; i < MAXJOBS; i++) {
 		if (jobs[i].pid != 0) {
 			printf("[%d] (%d) ", jobs[i].jid, jobs[i].pid);
@@ -659,7 +715,7 @@ handler_t *Signal(int signum, handler_t *handler)
 	action.sa_handler = handler;
 	sigemptyset(&action.sa_mask); /* block sigs of type being handled */
 	action.sa_flags = SA_RESTART; /* restart syscalls if possible */
-	
+
 	if (sigaction(signum, &action, &old_action) < 0)
 		unix_error("Signal error");
 	return (old_action.sa_handler);
