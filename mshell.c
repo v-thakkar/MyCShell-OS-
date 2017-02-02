@@ -56,7 +56,6 @@ struct job_t jobs[MAXJOBS]; /* The job list */
 /* Here are the functions that you will implement */
 void eval(char *cmdline);
 int builtin_cmd(char **argv);
-void do_bgfg(char **argv);
 void waitfg(pid_t pid);
 
 void sigchld_handler(int sig);
@@ -76,7 +75,6 @@ pid_t fgpid(struct job_t *jobs);
 struct job_t *getjobpid(struct job_t *jobs, pid_t pid);
 struct job_t *getjobjid(struct job_t *jobs, int jid);
 int pid2jid(pid_t pid);
-void listjobs(struct job_t *jobs);
 
 void usage(void);
 void unix_error(char *msg);
@@ -341,35 +339,86 @@ int parseline(const char *cmdline, char **argv)
 	return bg;
 }
 
+char *builtin_str[] = {
+    "jobs",
+    "bg",
+    "fg",
+    "quit",
+    "exit",
+    "&",
+    "cd"
+};
+
+/* built in cmd functions */
+
+int listjobs(char **);
+int do_bgfg(char **);
+int close_shell(char **);
+int ignore_singleton(char **);
+int change_dir(char **);
+
+
+int (*builtin_func[]) (char **)= {
+    &listjobs,
+    &do_bgfg,
+    &do_bgfg,
+    &close_shell,
+    &close_shell,
+    &ignore_singleton,
+    &change_dir
+};
+
+int num_cmds() {
+    return sizeof(builtin_str) / sizeof(char *);
+}
+
 /*
 * builtin_cmd - If the user has typed a built-in command then execute
 * it immediately.
 */
+int close_shell(char **argv) {
+    exit(0);
+}
+
+int ignore_singleton(char **argv) {
+    return 1;
+}
+
+int change_dir(char **argv) {
+    if (argv[1] == NULL) {
+        printf("cd command requires 1 argument\n");
+        return -1;
+    }
+    if (chdir(argv[1]) != 0) {
+        printf("chdir function error\n");
+        return -1;
+    }   
+
+    return 1;
+}
 
 int builtin_cmd(char **argv)
 {
-	if(!strcmp(argv[0],"jobs")) /* list jobs */
-	{
-		listjobs(jobs);
-		return 1;
-	}
-	if(!strcmp(argv[0],"bg") || !strcmp(argv[0],"fg"))
-	{
-		do_bgfg(argv);
-		return 1;
-	}
-    /* quit/exit command */
-	if((!strcmp(argv[0],"quit")) || (!strcmp(argv[0],"exit"))) exit(0);
+    int i;	
+    if (argv[0] == NULL) {
+        return 1;
+    }
+    
+    int total_builtin_cmds = num_cmds();
 
-	if(!strcmp(argv[0],"&")) return 1; /* ignore singleton & */
-
+    for (i = 0; i < total_builtin_cmds; i++) {
+        if (!strcmp(argv[0], builtin_str[i])) {
+            return (*builtin_func[i])(argv); 
+        }
+    }
+    
 	return 0; /* not a builtin command */
 }
 
 /*
 * do_bgfg - Execute the builtin bg and fg commands
 */
-void do_bgfg(char **argv)
+int do_bgfg(char **argv)
 {
 	struct job_t *j=NULL;
 
@@ -377,7 +426,7 @@ void do_bgfg(char **argv)
 	if(argv[1] == NULL)
 	{
 		printf("%s command requires PID or %%jobid argument\n",argv[0]);
-		return;
+		return -1;
 	}
 	/* Is the argument a PID? */
 	if(isdigit(argv[1][0]))
@@ -386,7 +435,7 @@ void do_bgfg(char **argv)
 		if(!(j = getjobpid(jobs,pid)))
 		{
 			printf("(%d): No such process\n", pid);
-			return;
+			return -1;
 		}
 	}
 	else if(argv[1][0] == '%') /* Is the argument a JID? */
@@ -395,13 +444,13 @@ void do_bgfg(char **argv)
 		if(!(j = getjobjid(jobs,jid)))
 		{
 			printf("%s: No such job\n",argv[1]);
-			return;
+			return -1;
  		}
 	}
 	else
 	{
 		printf("%s: argument must be a PID or %%jobid\n",argv[0]);
-		return;
+		return -1;
 	}
 
 	if(!strcmp(argv[0],"bg"))
@@ -418,11 +467,11 @@ void do_bgfg(char **argv)
 	}
 	else
 	{
-	printf("do_bgfg(): internal error\n");
-	exit(0);
+	    printf("do_bgfg(): internal error\n");
+	    exit(0);
 	}
-	return;
-	}
+	return 1;
+}
 
 /*
 * waitfg - Block until process pid is no longer the foreground process
@@ -644,7 +693,7 @@ int pid2jid(pid_t pid)
 }
 
 /* listjobs - Print the job list */
-void listjobs(struct job_t *jobs)
+int listjobs(char **argv)
 {
 	int i;
 
